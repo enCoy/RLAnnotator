@@ -57,6 +57,11 @@ def train(num_episodes, agent, env, output_dir, is_HF_available=False):
         episode_predictions = []
         episode_labels = []
         while not done:
+            if len(env.dtw_database) > 50:
+                env.dtw_database = cluster_signals(env.dtw_database, n_clusters=25)
+                env.visualize_dtw_database()
+
+
             # reset if it is the start of the episode
             num_episode_steps += 1
             if observation is None:
@@ -72,9 +77,9 @@ def train(num_episodes, agent, env, output_dir, is_HF_available=False):
 
             # env response with next observation, reward, terminate, info
             if episode <= args.warmup:
-                observation, rewards, done, info = env.step(action, is_HF_available=False)
+                observation, rewards, done, info = env.step(action, is_HF_available=False, episode=episode)
             else:
-                observation, rewards, done, info = env.step(action, is_HF_available=is_HF_available)
+                observation, rewards, done, info = env.step(action, is_HF_available=is_HF_available, episode=episode)
                 # save what you want to save into results
                 if info['correct_label'] is not None:
                     train_results['episode'].append(actual_episode_index)
@@ -87,6 +92,8 @@ def train(num_episodes, agent, env, output_dir, is_HF_available=False):
                     beat_error = convert_from_sample_to_ms(info['correct_label'] - action,
                                                            env.sampling_rate, env.downsampling_fac)
                     train_results['error_ms'].append(beat_error)
+
+
 
 
 
@@ -162,6 +169,7 @@ def train(num_episodes, agent, env, output_dir, is_HF_available=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="SCG RL method")
+    parser.add_argument('--machine', default='local', type=str, help='server or local')
     parser.add_argument('--env', default='SCGEnv', type=str, help='SCGEnv environment')
     parser.add_argument('--scg_label_type', default='AO', type=str, help='AO or AC signal type')
     parser.add_argument('--mode', default='train', type=str, help='train or test mode selector')
@@ -181,7 +189,6 @@ if __name__ == "__main__":
     parser.add_argument('--max_episode_length', default=300, type=int, help='')
     parser.add_argument('--num_episodes', default=500, type=int,
                         help='num episodes to train')
-    parser.add_argument('--num_iterations', default=1, type=int, help='num iterations (how many times you revisit all episodes) to train')
     parser.add_argument('--train_iter', default=200000, type=int, help='train iters each timestep')
     parser.add_argument('--epsilon', default=50000, type=int, help='linear decay of exploration policy')
     parser.add_argument('--seed', default=-1, type=int, help='')
@@ -203,14 +210,19 @@ if __name__ == "__main__":
     # convert args.action_noise_mean and args.action_noise_std to ms
     args.action_noise_mean = convert_from_sample_to_ms(args.action_noise_mean, args.sampling_rate, args.downsampling_factor)
     args.action_noise_std = convert_from_sample_to_ms(args.action_noise_std, args.sampling_rate, args.downsampling_factor)
+    # todo: pretrain the CNN so that you can speed up RL algorithm analysis
 
     # todo: pick nearest peak as decision before rmse calculation
     # todo: pick more diverse points for your dtw database
+    # todo: dtw window length can be as long as the boundary picked
     # todo: think about the confidence measure
-
-    project_dir = r"C:\Users\Cem Okan\GaTech Dropbox\Cem Yaldiz\RLSCGLabeling"
+    #todo: need to add standardization
+    if args.machine == 'server':
+        project_dir = r"/home/cmyldz/GaTech Dropbox/Cem Yaldiz/RLSCGLabeling"
+    else:
+        project_dir = r"C:\Users\Cem Okan\GaTech Dropbox\Cem Yaldiz\RLSCGLabeling"
     output_dir = os.path.join(project_dir, args.output_dir)
-    args.output_dir = get_output_folder(output_dir, args.env)
+    output_dir = get_output_folder(output_dir, args.env)
 
     scg_env = SCGEnv(project_dir, scg_label_type=args.scg_label_type, sampling_rate=args.sampling_rate,
                      downsampling_fac=args.downsampling_factor, extremum_type=args.extremum_type,

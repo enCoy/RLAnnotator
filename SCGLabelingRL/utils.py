@@ -231,3 +231,57 @@ def cluster_signals(signal_database, n_clusters=10):
             cluster_signals[0])  # Take the first as representative; other selection strategies can also be used
 
     return unique_signals
+
+from sklearn.preprocessing import StandardScaler
+
+
+def get_standardizer(x):
+    """
+    Fits a StandardScaler to the input numpy array x of shape (N, T, F) and returns the fitted scaler.
+    - N: Batch size
+    - T: Time dimension
+    - F: Feature dimension
+
+    Args:
+    - x: Input numpy array of shape (N, T, F)
+
+    Returns:
+    - scaler: The fitted StandardScaler object
+    """
+    # Reshape to (N*T, F) so that each time step is treated as a sample
+    N, T, F = x.shape
+    x_reshaped = x.reshape(-1, F)  # Shape: (N*T, F)
+
+    # Apply StandardScaler and fit it to the reshaped data
+    scaler = StandardScaler()
+    scaler.fit(x_reshaped)  # Fit the scaler to the data
+
+    # Return the fitted scaler object
+    return scaler
+
+
+def apply_standardizer(x, scaler):
+    """
+    Applies the previously fitted StandardScaler to the input numpy array x of shape (N, T, F).
+    - N: Batch size
+    - T: Time dimension
+    - F: Feature dimension
+
+    Args:
+    - x: Input numpy array of shape (N, T, F)
+    - scaler: The fitted StandardScaler object
+
+    Returns:
+    - standardized_x: Standardized numpy array
+    """
+    # Reshape to (N*T, F) to apply the scaler
+    N, T, F = x.shape
+    x_reshaped = x.reshape(-1, F)  # Shape: (N*T, F)
+
+    # Use the fitted scaler to standardize the data
+    standardized_x_reshaped = scaler.transform(x_reshaped)
+
+    # Reshape back to (N, T, F)
+    standardized_x = standardized_x_reshaped.reshape(N, T, F)
+
+    return standardized_x

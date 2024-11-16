@@ -3,6 +3,8 @@ import os
 from VisualizerFunctions import ClickHandler, plot_time_series_matrix_with_selection, plot_with_selected_lines
 import random
 from SCGLabelingRL.Models import Actor
+from scipy.signal import find_peaks
+
 import numpy as np
 from utils import get_boundary_constrain_reward, get_extremum_reward, get_consistency_reward, get_dtw_reward
 from utils import z_score_normalize
@@ -32,10 +34,12 @@ class SCGEnv:
         # state = scg_signal + (track_peak=0 1 if peak, 0 if valley) + prevKpredictions + boundaries
 
         # self.subject_based_boundaries = self.choose_intervals()
-        self.subject_based_boundaries = {1: [4, 35]}
+        self.subject_based_boundaries = {1: [4, 35], 2: [5, 40], 3: [5, 35], 4:[5, 30], 5: [5, 20], 6: [5, 30]}
         self.episode_dict, self.episode_label_dict, self.boundaries = self.create_episodes(episode_length=self.num_beats_in_episode, overlap_factor=0.5)
         self.num_episodes = len(list(self.episode_dict.keys()))
         self.episode_indices = [i for i in range(self.num_episodes)]
+        self.last_episode_feedback_received = None
+        self.last_x_choosen = None
         print("num keys: ", len(list(self.episode_dict.keys())))
         print("example shape: ", self.episode_dict[0].shape)
         print("example shape: ", self.episode_label_dict[0][0].shape)
@@ -59,7 +63,7 @@ class SCGEnv:
     def choose_intervals(self):
         subject_based_boundaries = {}
         # for sub_id in list(self.scg_dict.keys()):
-        for sub_id in [1]:
+        for sub_id in [6]:
             scg_subject = self.scg_dict[sub_id][0]
             # plot_time_series_matrix_signal_wise_normalization(scg_subject, upper_limit=250)
 
@@ -128,7 +132,9 @@ class SCGEnv:
         # concatenate all three
         return observation, rand_episode
 
-    def step(self, action, is_HF_available=False):
+    def step(self, action, episode, is_HF_available=False):
+        nearest_peak_x = None  # Local variable to store the nearest peak position
+        hf_reward = None
         # we are going to only change the state by selecting the next beat
         if self.current_episode_step + 1 < self.num_beats_in_episode:
             current_beat = self.current_state[:-self.num_past_detections-2]
@@ -140,6 +146,7 @@ class SCGEnv:
             extremum_coeff = 1
             consistency_coeff = 0.25
             dtw_coeff = 1.0
+            hf_reward_coeff = 3.0
             boundary_reward = boundary_coeff * get_boundary_constrain_reward(action, boundary[0], boundary[1], slope=-1)
             extremum_reward = extremum_coeff * get_extremum_reward(current_beat, action, extremum_type=self.extremum_type, use_prominence=self.use_prominence)
             consistency_reward = consistency_coeff * get_consistency_reward(action, detections, std_lim=self.consistency_std_lim)
@@ -147,10 +154,57 @@ class SCGEnv:
                 # get the reward from human feedback
                 dtw_signal = current_beat[max(0, action - self.dtw_window):min(self.beat_length, action + self.dtw_window)]
                 dtw_reward = dtw_coeff * get_dtw_reward(dtw_signal, self.dtw_database)
+
+                if episode > 100:
+                    if np.abs(dtw_reward / dtw_coeff) > 6:
+                        if episode == self.last_episode_feedback_received:
+                            hf_reward = -hf_reward_coeff * np.abs(action - self.last_x_choosen)
+                        else:
+                            self.last_episode_feedback_received = episode
+
+                            # Ask for human feedback by showing the signal and action as a vertical line at the corresponding x value
+                            fig, ax = plt.subplots(figsize=(10, 5))
+                            ax.plot(current_beat, label='Signal')
+                            ax.axvline(action, color='r', linestyle='--', label='Action')
+                            ax.set_xlabel('Time (beats)')
+                            ax.set_ylabel('Signal Value')
+                            ax.legend()
+                            plt.title(f"Click on the nearest peak to the correct action - Episode {episode}")
+
+                            # Capture the click event to find the nearest peak
+                            def onclick(event):
+                                nonlocal nearest_peak_x  # Allow modifying the nearest_peak_x variable
+                                # Find the x-coordinate of the click
+                                clicked_x = event.xdata
+                                if clicked_x is not None:
+                                    # Find the nearest peak to the clicked point
+                                    peaks, _ = find_peaks(current_beat)
+                                    nearest_peak_idx = np.argmin(np.abs(peaks - clicked_x))
+                                    nearest_peak_x = peaks[nearest_peak_idx]
+                                    print(f"Nearest peak at x = {nearest_peak_x}")
+
+                                    # Save or process this information (e.g., return nearest peak x)
+                                    # You can store this x position in a variable or use it for further calculations
+                                    return nearest_peak_x
+                            # Bind the click event
+                            cid = fig.canvas.mpl_connect('button_press_event', onclick)
+                            plt.show()
+
+                            if nearest_peak_x is not None:
+                                print("nearest peak to the action is: ", nearest_peak_x)
+                                hf_reward = -hf_reward_coeff * np.abs(action - nearest_peak_x)
+                            # also add this to dtw database
+                            self.add_to_dtw_database(current_beat, nearest_peak_x, self.scg_label_type)
+                            self.last_x_choosen = nearest_peak_x
+
+
             else:
                 dtw_reward = 0
-
+            dtw_reward = 0
             reward = boundary_reward + extremum_reward + consistency_reward + dtw_reward
+            if hf_reward is not None:
+                # print("hf reward is: ", hf_reward)
+                reward += hf_reward_coeff * hf_reward
             rewards = {
                 'boundary': boundary_reward,
                 'extremum': extremum_reward,
@@ -194,13 +248,14 @@ class SCGEnv:
 
     def add_to_dtw_database(self, signal, label_idx, label_type):
         # apply z score normalization
-        signal = z_score_normalize(signal)
+        # signal = z_score_normalize(signal)
         if label_type == 'AO':
             self.dtw_database.append(signal[:label_idx + self.dtw_window])
         else:  # AC
             self.dtw_database.append(signal[label_idx - self.dtw_window:label_idx + self.dtw_window])
 
     def visualize_dtw_database(self):
+        plt.figure(figsize=(10, 5))
         for i in range(len(self.dtw_database)):
             plt.plot(self.dtw_database[i])
         plt.title("Signals in DTW Database")

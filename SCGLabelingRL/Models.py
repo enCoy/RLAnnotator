@@ -51,3 +51,58 @@ class Critic(nn.Module):
         out = self.relu(out)
         out = self.fc3(out)
         return out
+
+
+
+### CNN-based autoencoder for pretraining
+class Encoder(nn.Module):
+    def __init__(self):
+        super(Encoder, self).__init__()
+        self.encoder = nn.Sequential(
+            nn.Conv1d(in_channels=1, out_channels=16, kernel_size=3, stride=1, padding=1), # Preserve T, F -> 16 channels
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=2, stride=2, padding=0), # downsample T -> T/2
+
+            nn.Conv1d(in_channels=16, out_channels=32, kernel_size=3, stride=1, padding=1), # Preserve T/2, F -> 32 channels
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=2, stride=2, padding=0), # downsample T/2 -> T/4
+
+            nn.Conv1d(in_channels=32, out_channels=64, kernel_size=3, stride=1, padding=1), # Preserve T/4, F -> 64 channels
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=2, stride=2, padding=0), # downsample T/4 -> T/8
+        )
+
+    def forward(self, x):
+        # x is assumed to be NxTxF
+        x = x.permute(0, 2, 1) # NxTxF -> NxFxT for Conv1d
+        x = self.encoder(x)
+        return x
+
+class Decoder(nn.Module):
+    def __init__(self):
+        super(Decoder, self).__init__()
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose1d(in_channels=64, out_channels=32, kernel_size=3, stride=2, padding=1, output_padding=1), # T/8 -> T/4
+            nn.ReLU(),
+
+            nn.ConvTranspose1d(in_channels=32, out_channels=16, kernel_size=3, stride=2, padding=1, output_padding=1), # T/4 -> T/2
+            nn.ReLU(),
+
+            nn.ConvTranspose1d(in_channels=16, out_channels=1, kernel_size=3, stride=2, padding=1, output_padding=1), # T/2 -> T
+        )
+
+    def forward(self, x):
+        x = self.decoder(x)
+        x = x.permute(0, 2, 1) # NxFxT -> NxTxF
+        return x
+
+class CnnAutoencoder(nn.Module):
+    def __init__(self):
+        super(CnnAutoencoder, self).__init__()
+        self.encoder = Encoder()
+        self.decoder = Decoder()
+
+    def forward(self, x):
+        latent = self.encoder(x)
+        reconstructed = self.decoder(latent)
+        return reconstructed
