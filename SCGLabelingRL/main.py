@@ -199,6 +199,7 @@ if __name__ == "__main__":
     parser.add_argument('--sampling_rate', default=2000, type=int, help='sampling rate of the SCG signal')
     parser.add_argument('--downsampling_factor', default=8, type=int, help='downsampling factor for the SCG signal')
     parser.add_argument('--pretrained_cnn_path', default='CNNAutoencoder/Pig2 As Test/best_model.pth', type=str, help='pretrained CNN path')
+    parser.add_argument('--scaler_path', default='CNNAutoencoder/Pig2 As Test/scaler.pkl', type=str, help='scaler path')
     args = parser.parse_args()
 
 
@@ -219,6 +220,8 @@ if __name__ == "__main__":
     output_dir = os.path.join(project_dir, args.output_dir)
     output_dir = get_output_folder(output_dir, args.env)
 
+    args.scaler_path = os.path.join(project_dir, args.scaler_path)
+
     pretrained_cnn = None
     if args.pretrained_cnn_path is not None:
         pretrained_cnn_path = os.path.join(project_dir, args.pretrained_cnn_path)
@@ -229,7 +232,7 @@ if __name__ == "__main__":
         pretrained_cnn = pretrained_cnn.encoder
 
 
-    scg_env = SCGEnv(project_dir, scg_label_type=args.scg_label_type, sampling_rate=args.sampling_rate,
+    scg_env = SCGEnv(project_dir, scaler_path=args.scaler_path, scg_label_type=args.scg_label_type, sampling_rate=args.sampling_rate,
                      downsampling_fac=args.downsampling_factor, extremum_type=args.extremum_type,
                      num_past_detections=args.num_past_detections, use_prominence=args.use_prominence)
 

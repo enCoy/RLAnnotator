@@ -13,7 +13,7 @@ from Models import TimeSeriesDataset
 if __name__ == "__main__":
     #todo: need to add validation portion later on
 
-    machine = 'server'
+    machine = 'local'
     if machine == 'server':
         project_dir = r"/home/cmyldz/GaTech Dropbox/Cem Yaldiz/RLSCGLabeling"
     else:
@@ -55,8 +55,11 @@ if __name__ == "__main__":
 
         # get the standardizer from X_train and apply it to X_train and X_test
         standardizer = get_standardizer(X_train)
+        with open(os.path.join(pig_output_dir, f'scaler.pkl'), "wb") as f:
+            pickle.dump(standardizer, f)
         X_train = apply_standardizer(X_train, standardizer)
         X_test = apply_standardizer(X_test, standardizer)
+
 
         # create the dataloader
         train_dataset = TimeSeriesDataset(X_train)
@@ -73,7 +76,7 @@ if __name__ == "__main__":
 
         best_val_loss = float('inf')
         best_model_path = os.path.join(pig_output_dir, 'best_model.pth')
-        num_epochs = 2
+        num_epochs = 1000
 
         # store losses for plotting
         train_losses = []

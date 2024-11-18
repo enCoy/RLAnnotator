@@ -250,7 +250,7 @@ def get_standardizer(x):
     """
     # Reshape to (N*T, F) so that each time step is treated as a sample
     N, T, F = x.shape
-    x_reshaped = x.reshape(-1, F)  # Shape: (N*T, F)
+    x_reshaped = x.reshape(-1, T * F)  # Shape: (N*T, F)
 
     # Apply StandardScaler and fit it to the reshaped data
     scaler = StandardScaler()
@@ -276,7 +276,7 @@ def apply_standardizer(x, scaler):
     """
     # Reshape to (N*T, F) to apply the scaler
     N, T, F = x.shape
-    x_reshaped = x.reshape(-1, F)  # Shape: (N*T, F)
+    x_reshaped = x.reshape(-1, T * F)  # Shape: (N*T, F)
 
     # Use the fitted scaler to standardize the data
     standardized_x_reshaped = scaler.transform(x_reshaped)

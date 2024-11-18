@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 # todo: also instead of padding via finding the max, look at the distribution of lengths
 
 class SCGEnv:
-    def __init__(self, project_dir, scg_label_type, sampling_rate, downsampling_fac,
+    def __init__(self, project_dir, scaler_path, scg_label_type, sampling_rate, downsampling_fac,
                  extremum_type='peak', num_past_detections=5, use_prominence=False, num_beats_in_episode=600):
 
         with open(os.path.join(project_dir, 'ProcessedData', 'padded_clipped_beat_dict.pkl'), "rb") as f:
@@ -31,6 +31,8 @@ class SCGEnv:
         self.sampling_rate = sampling_rate
         self.downsampling_fac = downsampling_fac
         # state = scg_signal + (track_peak=0 1 if peak, 0 if valley) + prevKpredictions + boundaries
+        with open(scaler_path, "rb") as f:
+            self.scaler = pickle.load(f)
 
         # self.subject_based_boundaries = self.choose_intervals()
         self.subject_based_boundaries = {1: [4, 35], 2: [5, 40], 3: [5, 35], 4:[5, 30], 5: [5, 20], 6: [5, 30]}
@@ -96,6 +98,8 @@ class SCGEnv:
             subject_selected_boundaries = self.subject_based_boundaries[subject_id]
             (scg_subject, ao_subject, ac_subject) = self.scg_dict[subject_id]
             scg_subject = scg_subject[:, :self.beat_length]  # we clip it to 296 to be able to use 3 layer CNN
+            print("scg shape: ", scg_subject.shape)
+            scg_subject = self.scaler.transform(scg_subject)
             num_series = len(scg_subject)
             start = 0
 
