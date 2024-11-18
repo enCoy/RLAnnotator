@@ -1,6 +1,7 @@
 import numpy as np
 import torch.nn as nn
 import torch
+from torch.utils.data import Dataset
 
 def fanin_init(size, fanin=None):
     fanin = fanin or size[0]
@@ -47,7 +48,7 @@ class Critic(nn.Module):
         out = self.fc1(x)
         out = self.relu(out)
         # debug()
-        out = self.fc2(torch.cat([out, a], 1))
+        out = self.fc2(torch.cat([out, a], 1))  # for Q(s, a) computation
         out = self.relu(out)
         out = self.fc3(out)
         return out
@@ -106,3 +107,14 @@ class CnnAutoencoder(nn.Module):
         latent = self.encoder(x)
         reconstructed = self.decoder(latent)
         return reconstructed
+
+
+class TimeSeriesDataset(Dataset):
+    def __init__(self, data):
+        self.data = data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return torch.tensor(self.data[idx], dtype=torch.float32)

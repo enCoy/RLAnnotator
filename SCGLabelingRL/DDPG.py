@@ -1,17 +1,17 @@
 from SCGLabelingRL.Models import Actor, Critic
 from Memory import SequentialMemory
 from torch.optim import Adam
-from RLUtils import hard_update, to_tensor, soft_update
+from RLUtils import hard_update, to_tensor, soft_update, get_pretrained_cnn_output, get_pretrained_cnn_output_for_action
 import numpy as np
 import torch.nn as nn
 import torch
 from utils import *
-
+import copy
 
 criterion = nn.MSELoss()
 
 class DDPG(object):
-    def __init__(self, n_states, n_actions, action_upper_range, args):
+    def __init__(self, beat_length, n_states, n_actions, action_upper_range, pretrained_cnn, args):
         """
 
         :param n_states:
@@ -29,6 +29,7 @@ class DDPG(object):
             self.seed(args.seed)
 
         self.n_states = n_states
+        self.other_state_dim = n_states - beat_length
         self.n_actions = n_actions
         self.action_upper_range = action_upper_range
 
@@ -37,15 +38,34 @@ class DDPG(object):
             'hidden1': args.hidden1,
             'hidden2': args.hidden2,
         }
-        self.actor = Actor(self.n_states, self.n_actions, **net_cfg)
-        self.actor_target = Actor(self.n_states, self.n_actions, **net_cfg)
-        self.actor_optim = Adam(self.actor.parameters(), lr=args.l_rate_actor)
+        self.beat_length = beat_length
 
-        self.critic = Critic(self.n_states, self.n_actions, **net_cfg)
-        self.critic_target = Critic(self.n_states, self.n_actions, **net_cfg)
+        self.pretrained_cnn = pretrained_cnn
+        if self.pretrained_cnn is not None:
+            self.pretrained_cnn_target = copy.deepcopy(pretrained_cnn)
+            self.pretrained_cnn_optim = Adam(self.pretrained_cnn.parameters(), lr=0.00003)
+            # get the output shape of the pretrained cnn
+            dummy_input = torch.randn(1, self.beat_length, 1)
+            dummy_output = self.pretrained_cnn(dummy_input)
+            self.pretrained_cnn_output_dim = dummy_output.shape[1] * dummy_output.shape[2]
+
+        if self.pretrained_cnn is not None:
+            self.actor = Actor(self.pretrained_cnn_output_dim + self.other_state_dim, self.n_actions, **net_cfg)
+            self.actor_target = Actor(self.pretrained_cnn_output_dim + self.other_state_dim, self.n_actions, **net_cfg)
+            self.critic = Critic(self.pretrained_cnn_output_dim + self.other_state_dim, self.n_actions, **net_cfg)
+            self.critic_target = Critic(self.pretrained_cnn_output_dim + self.other_state_dim, self.n_actions, **net_cfg)
+        else:
+            self.actor = Actor(self.n_states, self.n_actions, **net_cfg)
+            self.actor_target = Actor(self.n_states, self.n_actions, **net_cfg)
+            self.critic = Critic(self.n_states, self.n_actions, **net_cfg)
+            self.critic_target = Critic(self.n_states, self.n_actions, **net_cfg)
+
+        self.actor_optim = Adam(self.actor.parameters(), lr=args.l_rate_actor)
         self.critic_optim = Adam(self.critic.parameters(), lr=args.l_rate_critic)
 
         # make sure the target is with the same weight - IT is basically a COPY
+        if self.pretrained_cnn is not None:
+            hard_update(self.pretrained_cnn_target, self.pretrained_cnn)
         hard_update(self.actor_target, self.actor)
         hard_update(self.critic_target, self.critic)
 
@@ -71,9 +91,12 @@ class DDPG(object):
     def update_policy(self):
         # sample batch
         state_batch, action_batch, reward_batch, next_state_batch, terminal_batch = self.memory.sample_and_split(self.batch_size)
-
         # volatile means no gradient backpropagation
         # prepare for target batch
+        if self.pretrained_cnn is not None:
+            next_state_batch = get_pretrained_cnn_output(next_state_batch, self.beat_length, self.pretrained_cnn_target)
+            state_batch = get_pretrained_cnn_output(state_batch, self.beat_length, self.pretrained_cnn)
+
         next_q_values = self.critic_target([
             to_tensor(next_state_batch, volatile=True),   # states
             self.actor_target(to_tensor(next_state_batch, volatile=True))  # actions
@@ -105,6 +128,8 @@ class DDPG(object):
         # target update
         soft_update(self.actor_target, self.actor, self.tau)
         soft_update(self.critic_target, self.critic, self.tau)
+        if self.pretrained_cnn is not None:
+            soft_update(self.pretrained_cnn_target, self.pretrained_cnn, self.tau)
 
     def eval(self):
         self.actor.eval()
@@ -118,6 +143,9 @@ class DDPG(object):
             self.s_t = s_t1
 
     def select_action(self, s_t, decay_epsilon=True):
+        if self.pretrained_cnn is not None:
+            s_t = get_pretrained_cnn_output_for_action(s_t, self.beat_length, self.pretrained_cnn)
+
         action = to_numpy(
             self.actor(to_tensor(np.array([s_t])))
         ).squeeze(0)
@@ -143,7 +171,10 @@ class DDPG(object):
     def load_weights(self, output):
         if output is None:
             return
-
+        if self.pretrained_cnn is not None:
+            self.pretrained_cnn.load_state_dict(
+                torch.load('{}/finetuned_cnn.pkl'.format(output))
+            )
         self.actor.load_state_dict(
             torch.load('{}/actor.pkl'.format(output))
         )
@@ -153,6 +184,10 @@ class DDPG(object):
         )
 
     def save_model(self, output):
+        if self.pretrained_cnn is not None:
+            torch.save(self.pretrained_cnn.state_dict(),
+                       '{}/finetuned_cnn.pkl'.format(output))
+
         torch.save(self.actor.state_dict(),
                    '{}/actor.pkl'.format(output))
         torch.save(
@@ -160,6 +195,9 @@ class DDPG(object):
             '{}/critic.pkl'.format(output))
 
     def cuda(self):
+        if self.pretrained_cnn is not None:
+            self.pretrained_cnn.cuda()
+            self.pretrained_cnn_target.cuda()
         self.actor.cuda()
         self.actor_target.cuda()
         self.critic.cuda()

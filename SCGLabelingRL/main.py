@@ -12,13 +12,15 @@ from utils import convert_from_sample_to_ms, cluster_signals
 import math
 import pandas as pd
 import random
+from Models import CnnAutoencoder
+import torch
 
 import warnings
 
 # Suppress specific warning
 warnings.simplefilter("ignore", UserWarning)
 
-def train(num_episodes, agent, env, output_dir, is_HF_available=False):
+def train(num_episodes, agent, env, output_dir):
     agent.is_training = True
     episode = 0
     all_rewards = []
@@ -28,25 +30,10 @@ def train(num_episodes, agent, env, output_dir, is_HF_available=False):
                      'boundary_reward': [],
                      'extremum_reward': [],
                      'consistency_reward': [],
-                     'dtw_reward': [],
                      'correct_label': [],
                      'action': [],
                      'error_ms': [],
                      }
-    if is_HF_available:   # add the human feedback to your dtw database
-        # take one sample from each episode as a starting point
-        num_HF_episodes = 30
-        for hf_episode in range(num_HF_episodes):
-            hf_index = random.randint(0, env.beat_length - 1)
-            signal = env.episode_dict[hf_episode][hf_index]
-            label = env.episode_label_dict[hf_episode][env.label_index][hf_index]
-            env.add_to_dtw_database(signal, label, env.scg_label_type)
-            # todo: remove redundant samples from dtw data base
-
-        env.visualize_dtw_database()
-        # remove redundant samples
-        env.dtw_database = cluster_signals(env.dtw_database, n_clusters=5)
-        env.visualize_dtw_database()
 
     while episode < num_episodes:   # episodes basically
         print("Episode: ", episode)
@@ -57,10 +44,6 @@ def train(num_episodes, agent, env, output_dir, is_HF_available=False):
         episode_predictions = []
         episode_labels = []
         while not done:
-            if len(env.dtw_database) > 50:
-                env.dtw_database = cluster_signals(env.dtw_database, n_clusters=25)
-                env.visualize_dtw_database()
-
 
             # reset if it is the start of the episode
             num_episode_steps += 1
@@ -77,16 +60,15 @@ def train(num_episodes, agent, env, output_dir, is_HF_available=False):
 
             # env response with next observation, reward, terminate, info
             if episode <= args.warmup:
-                observation, rewards, done, info = env.step(action, is_HF_available=False, episode=episode)
+                observation, rewards, done, info = env.step(action)
             else:
-                observation, rewards, done, info = env.step(action, is_HF_available=is_HF_available, episode=episode)
+                observation, rewards, done, info = env.step(action)
                 # save what you want to save into results
                 if info['correct_label'] is not None:
                     train_results['episode'].append(actual_episode_index)
                     train_results['boundary_reward'].append(info['boundary_orig'])
                     train_results['extremum_reward'].append(info['extremum_orig'])
                     train_results['consistency_reward'].append(info['consistency_orig'])
-                    train_results['dtw_reward'].append(info['dtw_orig'])
                     train_results['correct_label'].append(info['correct_label'])
                     train_results['action'].append(action)
                     beat_error = convert_from_sample_to_ms(info['correct_label'] - action,
@@ -105,16 +87,16 @@ def train(num_episodes, agent, env, output_dir, is_HF_available=False):
             # agent observes and updates policy
             agent.observe(reward, observation, done)
 
-            if episode > args.warmup + 100:
-                if num_episode_steps == 300:
-                    # plot first 300 dimension of observation which is the beat
-                    plt.plot(observation[:300])
-                    # now title will be the action and I want a vertical line at the action
-                    plt.title(f'Action: {action}, Cons-R: {rewards["consistency"]}, Ext-R: {rewards["extremum"]}, Bound-R: {rewards["boundary"]}, DTW-R: {rewards["dtw"]}')
-                    plt.axvline(x=action, color='r', linestyle='--')
-                    plt.axvline(x=info['correct_label'], color='g', linestyle='--')
-
-                    plt.show()
+            # if episode > args.warmup + 100:
+            #     if num_episode_steps == 300:
+            #         # plot first 300 dimension of observation which is the beat
+            #         plt.plot(observation[:300])
+            #         # now title will be the action and I want a vertical line at the action
+            #         plt.title(f'Action: {action}, Cons-R: {rewards["consistency"]}, Ext-R: {rewards["extremum"]}, Bound-R: {rewards["boundary"]}')
+            #         plt.axvline(x=action, color='r', linestyle='--')
+            #         plt.axvline(x=info['correct_label'], color='g', linestyle='--')
+            #
+            #         plt.show()
 
             if episode > args.warmup:
                 agent.update_policy()
@@ -129,7 +111,6 @@ def train(num_episodes, agent, env, output_dir, is_HF_available=False):
                     False
                 )
         if episode > args.warmup:
-            print("aha sorun: ", episode_reward)
             all_rewards.append(episode_reward / num_episode_steps)
             print("Episode reward: ", episode_reward / num_episode_steps)
             rmse_error = mean_squared_error(episode_predictions, episode_labels, squared=False)
@@ -146,6 +127,7 @@ def train(num_episodes, agent, env, output_dir, is_HF_available=False):
             df.to_csv(file_path, index=False)
 
             # generate plots for all_rewards and all_rmse_ms_errors and save them to the output_dir
+            plt.figure()
             plt.plot(all_rewards)
             plt.title("Reward Evolution Plot")
             # xlabel should be episodes
@@ -154,12 +136,25 @@ def train(num_episodes, agent, env, output_dir, is_HF_available=False):
             plt.savefig(os.path.join(output_dir, f"rewards.png"))
             plt.close()
 
+            # Create the first plot with y-limit at 400
+            plt.figure()
             plt.plot(all_rmse_ms_errors)
             plt.title("RMSE Error Evolution Plot")
-            # xlabel should be episodes
             plt.xlabel("Episodes")
             plt.ylabel("RMSE Error (ms)")
-            plt.savefig(os.path.join(output_dir, f"rmse_errors.png"))
+            plt.ylim(top=400)  # Set upper y-limit to 400
+            plt.savefig(os.path.join(output_dir, "rmse_errors_400.png"))
+            plt.close()
+
+            # Create the second plot with y-limit at 50
+            plt.figure()
+            plt.plot(all_rmse_ms_errors)
+            plt.title("RMSE Error Evolution Plot")
+            plt.xlabel("Episodes")
+            plt.ylabel("RMSE Error (ms)")
+            plt.ylim(top=50)  # Set upper y-limit to 50
+            plt.savefig(os.path.join(output_dir, "rmse_errors_50.png"))
+            plt.close()
 
         episode +=1
 
@@ -187,7 +182,7 @@ if __name__ == "__main__":
     parser.add_argument('--ou_sigma', default=0.2, type=float, help='noise sigma')
     parser.add_argument('--ou_mu', default=0.0, type=float, help='noise mu')
     parser.add_argument('--max_episode_length', default=300, type=int, help='')
-    parser.add_argument('--num_episodes', default=500, type=int,
+    parser.add_argument('--num_episodes', default=115, type=int,
                         help='num episodes to train')
     parser.add_argument('--train_iter', default=200000, type=int, help='train iters each timestep')
     parser.add_argument('--epsilon', default=50000, type=int, help='linear decay of exploration policy')
@@ -196,14 +191,14 @@ if __name__ == "__main__":
     parser.add_argument('--action_noise_std', default=20.0, type=float, help='std noise to be added to selected action (in ms)')
     parser.add_argument('--num_past_detections', default=5, type=int, help='number of previous detections used for consistency')
     parser.add_argument('--extremum_type', default='peak', type=str, help='extremum to be tracked as ao/ac')
-    parser.add_argument('--use_prominence', default=False, type=bool, help='whether to use prominence or not in peakness reward')
+    parser.add_argument('--use_prominence', default=True, type=bool, help='whether to use prominence or not in peakness reward')
     parser.add_argument('--window_length', default=1, type=int, help='window length for the memory')
     parser.add_argument('--batch_size', default=64, type=int, help='batch size for training')
     parser.add_argument('--discount', default=0.99, type=float, help='')
     parser.add_argument('--output_dir', default='Output', type=str, help='output directory name')
-    parser.add_argument('--is_HF_available', default=True, type=bool, help='whether to use Human Feedback or not. Requires labeled dataset for now and will require external labeling later')
     parser.add_argument('--sampling_rate', default=2000, type=int, help='sampling rate of the SCG signal')
     parser.add_argument('--downsampling_factor', default=8, type=int, help='downsampling factor for the SCG signal')
+    parser.add_argument('--pretrained_cnn_path', default='CNNAutoencoder/Pig2 As Test/best_model.pth', type=str, help='pretrained CNN path')
     args = parser.parse_args()
 
 
@@ -216,7 +211,7 @@ if __name__ == "__main__":
     # todo: pick more diverse points for your dtw database
     # todo: dtw window length can be as long as the boundary picked
     # todo: think about the confidence measure
-    #todo: need to add standardization
+    # todo: need to add standardization
     if args.machine == 'server':
         project_dir = r"/home/cmyldz/GaTech Dropbox/Cem Yaldiz/RLSCGLabeling"
     else:
@@ -224,10 +219,19 @@ if __name__ == "__main__":
     output_dir = os.path.join(project_dir, args.output_dir)
     output_dir = get_output_folder(output_dir, args.env)
 
+    pretrained_cnn = None
+    if args.pretrained_cnn_path is not None:
+        pretrained_cnn_path = os.path.join(project_dir, args.pretrained_cnn_path)
+        # initialize the model, loss function and optimizer
+        pretrained_cnn = CnnAutoencoder()
+        # load model state
+        pretrained_cnn.load_state_dict(torch.load(pretrained_cnn_path))
+        pretrained_cnn = pretrained_cnn.encoder
+
+
     scg_env = SCGEnv(project_dir, scg_label_type=args.scg_label_type, sampling_rate=args.sampling_rate,
                      downsampling_fac=args.downsampling_factor, extremum_type=args.extremum_type,
-                     num_past_detections=args.num_past_detections, use_prominence=args.use_prominence,
-                     is_HF_available=args.is_HF_available)
+                     num_past_detections=args.num_past_detections, use_prominence=args.use_prominence)
 
     # fix seed
     seed = 23
@@ -243,7 +247,7 @@ if __name__ == "__main__":
     # We want to add past detections for consistency
 
 
-    agent = DDPG(n_states, n_actions, args=args, action_upper_range=env_beat_length)
+    agent = DDPG(scg_env.beat_length, n_states, n_actions, args=args, action_upper_range=env_beat_length, pretrained_cnn=pretrained_cnn)
     if args.mode == 'train':
-        train(num_episodes=args.num_episodes, agent=agent, env=scg_env, output_dir=output_dir, is_HF_available=args.is_HF_available)
+        train(num_episodes=args.num_episodes, agent=agent, env=scg_env, output_dir=output_dir)
     # initialize your actor

@@ -7,34 +7,8 @@ import torch
 from Models import CnnAutoencoder
 import torch.nn as nn
 import matplotlib.pyplot as plt
-
-class TimeSeriesDataset(Dataset):
-    def __init__(self, data):
-        self.data = data
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        return torch.tensor(self.data[idx], dtype=torch.float32)
-
-
-def load_train_test_pigs(scg_dict, test_pigs, train_pigs, beat_length):
-    # create an empty array with shape Nxbeat_length
-    # N is the number of beats in the scg signal
-    # beat_length is the length of the beat
-    train_beats = np.zeros((0, beat_length))
-    test_beats = np.zeros((0, beat_length))
-    for pig in train_pigs:
-        data = scg_dict[pig]
-        # concatenate the data to the train_beats array
-        train_beats = np.concatenate((train_beats, data[0]), axis=0)
-
-    for pig in test_pigs:
-        data = scg_dict[pig]
-        # concatenate the data to the test_beats array
-        test_beats = np.concatenate((test_beats, data[0]), axis=0)
-    return train_beats, test_beats
+from HelperFunctions import load_train_test_pigs
+from Models import TimeSeriesDataset
 
 if __name__ == "__main__":
     #todo: need to add validation portion later on

@@ -101,3 +101,21 @@ def downsample_signal(x, downsampling_fac):
     """
     out = signal.decimate(x, downsampling_fac)
     return out
+
+
+def load_train_test_pigs(scg_dict, test_pigs, train_pigs, beat_length):
+    # create an empty array with shape Nxbeat_length
+    # N is the number of beats in the scg signal
+    # beat_length is the length of the beat
+    train_beats = np.zeros((0, beat_length))
+    test_beats = np.zeros((0, beat_length))
+    for pig in train_pigs:
+        data = scg_dict[pig]
+        # concatenate the data to the train_beats array
+        train_beats = np.concatenate((train_beats, data[0]), axis=0)
+
+    for pig in test_pigs:
+        data = scg_dict[pig]
+        # concatenate the data to the test_beats array
+        test_beats = np.concatenate((test_beats, data[0]), axis=0)
+    return train_beats, test_beats
